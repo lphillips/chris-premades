@@ -90,7 +90,7 @@ async function item({speaker, actor, token, character, item, args, scope, workfl
             {
                 'key': 'flags.midi-qol.onUseMacroName',
                 'mode': 0,
-                'value': 'function.chrisPremades.macros.bardicInspiration.damage,preDamageApplication',
+                'value': 'function.chrisPremades.macros.bardicInspiration.magicDamage,preDamageApplication',
                 'priority': 20
             }
 
@@ -137,7 +137,7 @@ async function attack({speaker, actor, token, character, item, args, scope, work
     }
     queue.remove(workflow.item.uuid);
 }
-async function damage({speaker, actor, token, character, item, args, scope, workflow}) {
+async function magicDamage({speaker, actor, token, character, item, args, scope, workflow}) {
     if (!workflow.targets.size || workflow.item.type != 'spell') return;
     if ((workflow.item.system.actionType === 'rsak' || workflow.item.system.actionType === 'msak') && !workflow.hitTargets.size) return;
     let effect = chris.getEffects(workflow.actor).find(i => i.flags['chris-premades']?.feature?.bardicInspiration);
@@ -203,6 +203,70 @@ async function damage({speaker, actor, token, character, item, args, scope, work
             targetDamage.newHP -= damageTotal;
         }
     }
+    queue.remove(workflow.item.uuid);
+}
+async function damage({speaker, actor, token, character, item, args, scope, workflow}) {
+    if (!workflow.targets.size || workflow.item.type != 'weapon') return;
+    if ((workflow.item.system.actionType === 'rsak' || workflow.item.system.actionType === 'msak') && !workflow.hitTargets.size) return;
+    let effect = chris.getEffects(workflow.actor).find(i => i.flags['chris-premades']?.feature?.bardicInspiration);
+    if (!effect) return;
+    let queueSetup = await queue.setup(workflow.item.uuid, 'bardicInspiration', 150);
+    if (!queueSetup) return;
+    let selection = await chris.selectTarget('Use Combat Inspiration?', constants.yesNoButton, workflow.targets, false, 'one');
+    if (!selection.buttons) {
+        queue.remove(workflow.item.uuid);
+        return;
+    }
+    let bardDice = effect.flags['chris-premades'].feature.bardicInspiration;
+    await chris.removeEffect(effect);
+    let targetTokenID = selection.inputs.find(i => i);
+    if (!targetTokenID) {
+        queue.remove(workflow.item.uuid);
+        return;
+    }
+    let targetDamage = workflow.damageList.find(i => i.tokenId === targetTokenID);
+    let defaultDamageType = workflow.defaultDamageType;
+    let roll = await new Roll(bardDice + '[' + defaultDamageType + ']').roll({'async': true});
+    roll.toMessage({
+        'rollMode': 'roll',
+        'speaker': {'alias': name},
+        'flavor': 'Combat Inspiration'
+    });
+    let targetActor = canvas.scene.tokens.get(targetDamage.tokenId).actor;
+    if (!targetActor) {
+        queue.remove(workflow.item.uuid);
+        return;
+    }
+    let hasDI = chris.checkTrait(targetActor, 'di', defaultDamageType);
+    if (hasDI) {
+        queue.remove(workflow.item.uuid);
+        return;
+    }
+    let damageTotal = roll.total;
+    let hasDR = chris.checkTrait(targetActor, 'dr', defaultDamageType);
+    if (hasDR) damageTotal = Math.floor(damageTotal / 2);
+    targetDamage.damageDetail[0].push(
+        {
+            'damage': damageTotal,
+            'type': defaultDamageType
+        }
+    );
+    targetDamage.totalDamage += damageTotal;
+    
+    targetDamage.appliedDamage += damageTotal;
+    targetDamage.hpDamage += damageTotal;
+    if (targetDamage.oldTempHP > 0) {
+        if (targetDamage.oldTempHP >= damageTotal) {
+            targetDamage.newTempHP -= damageTotal;
+        } else {
+            let leftHP = damageTotal - targetDamage.oldTempHP;
+            targetDamage.newTempHP = 0;
+            targetDamage.newHP -= leftHP;
+        }
+    } else {
+        targetDamage.newHP -= damageTotal;
+    }
+    
     queue.remove(workflow.item.uuid);
 }
 export let bardicInspiration = {
